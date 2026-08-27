@@ -238,7 +238,7 @@ if st.session_state["estado_app"] == "pantalla_inicial":
             try:
                 texto_func = st.session_state["input_texto_widget"].strip()
                 sym_expr, x_sym, f_num = parsear_funcion(texto_func)
-                pasos = generar_pasos_biseccion(f_num, a_in, b_in, tipo=tipo_in.lower())
+                pasos = generar_pasos_biseccion(f_num, a_in, b_in, tipo=tipo_in.lower(), sym_expr=sym_expr, x_sym=x_sym)
                 
                 # Guardar en estados permanentes
                 st.session_state["funcion_activa"] = texto_func

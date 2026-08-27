@@ -39,7 +39,7 @@ def main():
         
     try:
         sym_expr, x_sym, f_num = parsear_funcion(expr_str)
-        pasos = generar_pasos_biseccion(f_num, a_val, b_val, tipo=tipo.lower())
+        pasos = generar_pasos_biseccion(f_num, a_val, b_val, tipo=tipo.lower(), sym_expr=sym_expr, x_sym=x_sym)
     except Exception as e:
         print(f"Error al interpretar los datos: {e}")
         sys.exit(1)

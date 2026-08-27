@@ -60,17 +60,84 @@ def parsear_funcion(expr_str: str) -> Tuple[sp.Expr, sp.Symbol, Any]:
     return sym_expr, x, f_num
 
 
+def calcular_extremo_derivadas(
+    sym_expr: sp.Expr,
+    x_sym: sp.Symbol,
+    a_init: float,
+    b_init: float,
+    tipo: str = "minimo"
+) -> Optional[float]:
+    """
+    Calcula internamente el extremo analítico (mínimo o máximo) en el intervalo [a_init, b_init]
+    usando derivadas (puntos críticos f'(x) = 0).
+    """
+    tipo_norm = tipo.lower().replace("í", "i").replace("á", "a").strip()
+    buscar_min = tipo_norm.startswith("min")
+    try:
+        d1 = sp.diff(sym_expr, x_sym)
+        puntos = set()
+        
+        # 1. Resolución simbólica con solve
+        try:
+            sols = sp.solve(d1, x_sym)
+            if not isinstance(sols, (list, tuple, set)):
+                sols = [sols]
+            for s in sols:
+                try:
+                    val_c = complex(s.evalf())
+                    if abs(val_c.imag) < 1e-7:
+                        val = val_c.real
+                        if a_init - 1e-5 <= val <= b_init + 1e-5:
+                            puntos.add(round(val, 9))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+            
+        # 2. Resolución en el intervalo con solveset
+        try:
+            ss = sp.solveset(d1, x_sym, domain=sp.Interval(a_init, b_init))
+            for s in ss:
+                try:
+                    val_c = complex(s.evalf())
+                    if abs(val_c.imag) < 1e-7:
+                        val = val_c.real
+                        if a_init - 1e-5 <= val <= b_init + 1e-5:
+                            puntos.add(round(val, 9))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+            
+        if puntos:
+            f_num = sp.lambdify(x_sym, sym_expr, modules=['numpy'])
+            puntos_list = list(puntos)
+            if buscar_min:
+                mejor = min(puntos_list, key=lambda p: float(f_num(p)))
+            else:
+                mejor = max(puntos_list, key=lambda p: float(f_num(p)))
+            return float(mejor)
+    except Exception:
+        pass
+    return None
+
+
 def generar_pasos_biseccion(
     f_num: Any,
     a_init: float,
     b_init: float,
     tipo: str = "minimo",
     max_iter: int = 15,
-    tol: float = 1e-4
+    tol: float = 1e-4,
+    sym_expr: Optional[sp.Expr] = None,
+    x_sym: Optional[sp.Symbol] = None,
+    extremo_exacto: Optional[float] = None
 ) -> List[Dict[str, Any]]:
     """
     Genera la secuencia completa de pasos del método de bisección
     basado en el análisis comparativo del intervalo.
+    Si en algún momento encuentra el extremo obtenido internamente mediante derivadas,
+    frena la iteración en ese punto.
     """
     tipo_norm = tipo.lower().replace("í", "i").replace("á", "a").strip()
     buscar_min = tipo_norm.startswith("min")
@@ -80,14 +147,24 @@ def generar_pasos_biseccion(
     if a >= b:
         raise ValueError("El extremo 'a' debe ser menor que 'b'.")
         
+    if extremo_exacto is None and sym_expr is not None and x_sym is not None:
+        extremo_exacto = calcular_extremo_derivadas(sym_expr, x_sym, a, b, tipo=tipo)
+        
     delta = min(tol / 10.0, (b - a) / 100.0, 1e-5)
     pasos = []
     
     for k in range(1, max_iter + 1):
         longitud = b - a
         m = (a + b) / 2.0
-        
         delta_k = min(delta, longitud / 4.0)
+        
+        # Comprobar si el punto medio coincide con el extremo obtenido internamente mediante derivadas
+        es_extremo = False
+        if extremo_exacto is not None:
+            if abs(m - extremo_exacto) < 1e-5 or abs(m - extremo_exacto) <= delta_k or np.isclose(m, extremo_exacto, atol=1e-5):
+                es_extremo = True
+                m = float(extremo_exacto)
+                
         x1 = m - delta_k
         x2 = m + delta_k
         
@@ -97,7 +174,27 @@ def generar_pasos_biseccion(
             ym = float(f_num(m))
         except Exception as e:
             raise RuntimeError(f"Error evaluando f(x): {e}")
-        
+            
+        if es_extremo:
+            nuevo_a, nuevo_b = m, m
+            explicacion = f"Extremo alcanzado en el punto medio (m = {m:.4f}) -> Se detiene la iteración"
+            pasos.append({
+                "iteracion": k,
+                "a": a,
+                "b": b,
+                "m": m,
+                "f_m": ym,
+                "x1": x1,
+                "x2": x2,
+                "f_x1": y1,
+                "f_x2": y2,
+                "nuevo_a": nuevo_a,
+                "nuevo_b": nuevo_b,
+                "intervalo_str": f"[{a:.4f}, {b:.4f}]",
+                "decision": explicacion
+            })
+            break
+            
         if buscar_min:
             if y1 < y2:
                 nuevo_a, nuevo_b = a, x2
@@ -166,30 +263,12 @@ def verificacion_interna_silenciosa(
     Comprobación interna con derivadas sin exponer fórmulas ni menciones al usuario.
     Retorna simplemente un booleano de consistencia.
     """
-    tipo_norm = tipo.lower().replace("í", "i").replace("á", "a").strip()
-    buscar_min = tipo_norm.startswith("min")
     try:
-        d1 = sp.diff(sym_expr, x_sym)
-        d2 = sp.diff(d1, x_sym)
-        
-        puntos = []
-        try:
-            for s in sp.solve(d1, x_sym):
-                if s.is_real:
-                    val = float(s.evalf())
-                    if a_init - 1e-3 <= val <= b_init + 1e-3:
-                        puntos.append(val)
-        except Exception:
-            pass
-            
-        if puntos:
-            f_num = sp.lambdify(x_sym, sym_expr, modules=['numpy'])
-            if buscar_min:
-                mejor = min(puntos, key=lambda p: float(f_num(p)))
-            else:
-                mejor = max(puntos, key=lambda p: float(f_num(p)))
-            return abs(x_obtenido - mejor) < 0.1
+        extremo = calcular_extremo_derivadas(sym_expr, x_sym, a_init, b_init, tipo=tipo)
+        if extremo is not None:
+            return abs(x_obtenido - extremo) < 0.1
         else:
+            d1 = sp.diff(sym_expr, x_sym)
             d1_val = float(sp.lambdify(x_sym, d1, modules=['numpy'])(x_obtenido))
             return abs(d1_val) < 0.2
     except Exception:
